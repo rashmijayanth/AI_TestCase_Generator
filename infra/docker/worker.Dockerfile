@@ -21,9 +21,20 @@ WORKDIR /app
 
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
+COPY scripts/seed_corpus.py ./scripts/seed_corpus.py
+
+# Same appdata-volume ownership issue as api.Dockerfile -- see the comment
+# there. The worker writes Milvus Lite's db file into /app/data too.
+RUN mkdir -p /app/data && chown app:app /app/data
 
 ENV PYTHONUNBUFFERED=1
 
 USER app
 
+# scripts/seed_corpus.py isn't run automatically here -- it's a one-time
+# operational step (Phase 11), invoked explicitly via `docker compose exec
+# worker python scripts/seed_corpus.py` (local dev) or from
+# user_data.sh.tftpl after the stack comes up (EC2). This container already
+# has the embeddings/vectorstore extras and the real env vars the script
+# needs, which is why it lives here rather than in a bare venv.
 CMD ["celery", "-A", "testgen.worker.celery_app", "worker", "--loglevel=info"]

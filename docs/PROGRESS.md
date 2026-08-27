@@ -2,7 +2,7 @@
 
 > If resuming this project in a new session: read `docs/DESIGN.md` first (locked source of truth for *what* to build), then this file (tracks *how far we've gotten* and *what to do next*). Don't re-derive anything below by re-reading the whole codebase — it's kept current on purpose.
 
-**Next Action:** Begin Phase 11 (Verification) — the last phase. DESIGN.md §10's plan: `docker-compose up` → Postgres/Redis/API/worker/UI running → upload a sample doc through the Streamlit UI → job runs in background → review/approve in the UI → confirm RTM + audit log + real Jira issue creation → `pytest` (unit/integration/contract/eval) green, `ruff`/`mypy` clean. Two real, standing constraints this environment has had since Phase 3/6 mean parts of that can't run against genuinely live external services here: no `GEMINI_API_KEY` (so a real Celery-worker generation run can't call the real Gemini API) and no live Jira credentials configured in this `.env` (so `alm_sync` will legitimately come back empty, same as every other test in this repo). Verify everything that *can* be real for real — the full container stack coming up healthy, a real document upload, real DB/Milvus/Redis behavior — and use the same scripted-deps technique Phase 4/8 already established (`ScriptedChatModelFactory` + `DeterministicFakeEmbedder`, or a small seed script following `tests/integration/test_requirements_api.py`'s `_run_worker_directly` pattern) for the generation step, stating plainly which parts stayed simulated and why, rather than claiming a fully-live run that isn't possible here. Also close (or explicitly defer with a stated reason) the corpus-seeding gap Phase 9 surfaced: nothing calls `knowledge/corpus.py`'s `seed_regulatory_corpus` outside of tests, so a fresh stack's Milvus collection starts empty — needs either a seed step in `user_data.sh.tftpl`/a `scripts/seed_corpus.py`, or an explicit call-out in the walkthrough that this step is manual today.
+**Next Action:** None — all 11 phases are done; this was the last one. The system is built, containerized, documented, and verified as thoroughly as this environment honestly allows (see Phase 11 Verification below for exactly what "as thoroughly as this environment allows" means, including a real, live-caught bug that would have shipped broken without it). If a future session picks this back up, the only *genuinely* remaining work is closing the two standing "untested-live" gaps this file has carried since Phase 3/6 — both need something this environment doesn't have, not more code: (1) a real `GEMINI_API_KEY`, to confirm `GeminiEmbedder`/`ChatGoogleGenerativeAI` work against the live API and to finally write real tests into the still-empty `tests/eval/` (Decision 63); (2) real Jira Cloud credentials, to confirm `JiraAdapter`'s live sync path beyond its current "constructed correctly, never actually called" status (Decision 35). Everything else that could be verified without live third-party credentials has been.
 
 ---
 
@@ -21,7 +21,7 @@
 | 8 | UI | Done (2026-08-27) | Streamlit (4 pages incl. human-approval screen), live-verified end-to-end in a real browser against a real API+Postgres — 25 new tests, 139 total, 91% cov |
 | 9 | Infra | Done (2026-08-27) | Terraform (validated, not applied); Dockerfiles for api/worker/ui — all 3 built and run for real via `docker compose up` |
 | 10 | Docs | Done (2026-08-27) | 4 ADRs (`docs/adr/`), compliance mapping doc (`docs/compliance/mapping.md`) covering all 18 seeded clauses + GDPR rights |
-| 11 | Verification | Not started | Full `docker-compose up` walkthrough per DESIGN.md §10 |
+| 11 | Verification | Done (2026-08-27) | Full `docker-compose up` walkthrough per DESIGN.md §10, live in a real browser against real containers — found and fixed 2 real bugs invisible to every prior phase (Decisions 61, 62), incl. one that meant real background generation had never actually worked |
 
 ---
 
@@ -98,6 +98,10 @@ Decisions made while executing DESIGN.md that aren't spelled out verbatim in it,
 57. **All 3 containers verified for real via `docker compose up`** (build cache reused from earlier manual `docker build` runs of each Dockerfile) — `api` reached `healthy` (alembic migrations ran, `/health` returned 200), `worker` connected to Redis and logged `celery@... ready`, `ui` served HTTP 200 and passed its own healthcheck. The `ui` service's host port (8501) collided with an unrelated, pre-existing container on this dev machine from a different project — not a defect in `docker-compose.yml` (which correctly claims the standard port) — verified instead via `docker run` against the same compose-built image, joined to the compose network, on an alternate host port.
 58. **`docs/adr/` (4 records, Nygard-style Context/Decision/Consequences) holds only the decisions that clear a real bar: significant, not obvious in hindsight, worth a future reader understanding the *reasoning* for.** Everything else stays in this file's own numbered decision log rather than being promoted to an ADR — most of the 57 decisions above are legitimate build-time records, but "why LangGraph fixed-topology + a real `interrupt()`," "why hexagonal ports/adapters," "why an application-level hash chain," and "why `MILVUS_DB_URI`, not `MILVUS_URI`" are the four a new contributor would most need the *argument* for, not just the outcome. Deliberately not one ADR per phase or per file touched — that would just be this decision log with extra ceremony.
 59. **`docs/compliance/mapping.md` is a static companion to the *dynamic* `compliance_mappings` table (DESIGN.md §5), not a replacement for it.** The DB table records which clause a specific generated test case actually cited, per run, via the Compliance Critic's real retrieval; this document instead answers "what does this codebase do, structurally, to address clause X" — a fixed backdrop, not per-artifact evidence. Every mapping claim in it was checked against the real code before being written down (e.g. grepped every router for `CurrentUser`/org-scoping rather than asserting "RBAC covers everything" from memory) rather than assumed from having built the features. Carries forward Decision 21's honesty framing explicitly and up front, not just by reference — the corpus's paraphrase-not-verbatim disclaimer is the first thing in the document, not a footnote.
+60. **`scripts/seed_corpus.py`** closes the Phase 9 gap: real `get_embedder()`/`get_vector_store()`, calls `seed_regulatory_corpus()` for real, fails loudly (not silently) via `get_embedder()`'s existing `ValueError` if `GEMINI_API_KEY` isn't configured — confirmed live, this environment's standing constraint. Wired into `worker.Dockerfile` (copied in, since that container already has the `embeddings`/`vectorstore` extras and the real env vars) and `user_data.sh.tftpl` (a post-`up` retry loop, idempotent per Decision 20 so it's safe to leave in a boot script). Not run automatically on every worker start — a one-time operational step, invoked explicitly.
+61. **Real bug, found only by uploading a real document through the real containerized API, not by writing or reading the Dockerfiles**: both `api` and `worker` run as a non-root user (`app`, uid 1000) but `docker-compose.yml`'s named `appdata` volume mounts at `/app/data` owned by root by default — `ingest_document()`'s first real write crashed with `PermissionError: [Errno 13] '/app/data/storage'`. Fixed with the standard Docker pattern: `RUN mkdir -p /app/data && chown app:app /app/data` *before* `USER app` in both Dockerfiles, so a fresh named volume gets seeded with the right ownership from the image on its first mount (Docker's own documented behavior for empty named volumes). The already-existing, already-broken volume had to be deleted and recreated for the fix to take effect — rebuilding the image alone doesn't retroactively fix ownership on a volume Docker already created.
+62. **The single most consequential bug this project has shipped, and the clearest argument for Phase 11 existing at all: `generate_test_cases_task` was never actually registered with the real Celery worker process.** `celery -A testgen.worker.celery_app worker` only imports `celery_app.py` — the module that *constructs* the `Celery` app — not `testgen.worker.tasks`, the module whose `@celery_app.task(...)` decorator is what actually registers the task. Nothing in the whole codebase or test suite had ever started a real `celery worker` process to consume a real task before Phase 11 (`test_requirements_api.py`/`test_worker_tasks.py` both call `run_generation_for_requirement` directly, by explicit design — see their own docstrings): `trigger_generation`'s `.delay()` call only needs the task *name* to enqueue successfully, so every integration test through Phase 9 looked completely green while this was broken. A real worker, started for real, failed immediately with `Received unregistered task of type 'testgen.generate_test_cases'. The message has been ignored and discarded.` Fixed with Celery's own documented mechanism for exactly this: `Celery("testgen", ..., include=["testgen.worker.tasks"])` — deliberately not a direct top-level `import testgen.worker.tasks` in `celery_app.py`, which would be a real circular import (`tasks.py` itself imports `celery_app` from `celery_app.py`); `include` is lazy, consulted by Celery's own worker bootstrap after the app object already exists, which is exactly why it's the correct fix and not just the convenient one. Reverified after the fix: the real worker now lists `testgen.generate_test_cases` under `[tasks]` at startup, receives a real enqueued task, and fails at the *correct, documented* point instead (`GEMINI_API_KEY is required`) — a clean, expected failure, not a silent no-op.
+63. **`tests/eval/` has never had an actual test file written into it, across all 10 prior phases** — confirmed by listing the directory during Phase 11 (only `__init__.py`). Consistent with never having a real `GEMINI_API_KEY` to run LLM-output-quality evals against in this environment (Decision 22 and this file's every "untested-live" note), but worth stating explicitly rather than leaving implied: DESIGN.md §10 names "eval" as one of four pytest categories the verification plan expects, and the honest state is "the category is scaffolded and CI-excluded (Decision 38), not merely thin — it's empty."
 
 ---
 
@@ -302,5 +306,117 @@ Phases 8/9, but the same checks were still run, not skipped):
 - `knowledge/corpus.py` (Decision 21's own seed data) was read in full before writing the compliance doc's per-clause table, rather than working from a summary — the 18 clauses' exact standard/`clause_ref`/paraphrased text all came from that read, not reconstructed from memory.
 
 **No bugs found this phase** — expected for a docs-only phase with no source changes; the verification effort went into *accuracy of the documentation's claims* rather than into catching code defects.
+
+**Committed:** yes — see git log.
+
+---
+
+## Phase 11 Verification (2026-08-27) — final phase
+
+The full DESIGN.md §10 walkthrough, against the actual `docker-compose`
+stack (not local dev processes — Phase 8's UI verification used local
+`uvicorn`/`streamlit`; this is the first time the *built images* were
+driven end to end). This is the phase that justified having a Phase 11 at
+all: two real, structural bugs were found that no prior phase's testing —
+including Phase 8's own live-browser verification — could have caught,
+because both only manifest when a real container, running as it actually
+will in production, does something for the first time.
+
+**Walkthrough, in order:**
+
+1. `docker compose up -d` — Postgres/Redis (already running, 8+ hours,
+   untouched) + `api`/`worker`/`ui` all built and started. `api` reached
+   Docker's `healthy` state; `ui`'s host port (8501) again collided with
+   the same unrelated pre-existing container on this dev machine as Phase
+   9 — same non-issue, worked around the same way (`docker run` against
+   the compose-built image, joined to the compose network, alternate host
+   port).
+2. `scripts/seed_corpus.py` run for real inside the `worker` container —
+   failed exactly as documented (`GEMINI_API_KEY is required`), confirming
+   its wiring reaches the correct point and fails loudly rather than
+   masking the missing key.
+3. Register → auto-login → create project → **upload a real document via
+   direct HTTP against the containerized API** (browser file-picker
+   automation is sandboxed the same way Phase 8 found — worked around the
+   same way, `httpx` direct POST) — **crashed with a real bug, see below**.
+4. Fixed, rebuilt, retried — upload succeeded, 2 requirements extracted.
+5. **Triggered a real generation via the UI** (`Generate test cases`) —
+   enqueued to the real `worker` via real Redis — **the real worker
+   discarded it as an unregistered task, a second real bug, see below**.
+6. Fixed, rebuilt, retried — the real worker received the real task and
+   failed at the *correct, documented* point (`GEMINI_API_KEY is
+   required`) instead of silently discarding it.
+7. Seeded a pending-approval state the same way Phase 8 did (scripted fake
+   LLM responses + fake embedder, run from the host against the same
+   containerized Postgres) — reused, not reinvented.
+8. **Full approval screen, live, in the browser, against the real
+   containerized API+UI**: drafted test cases + critic feedback rendered
+   correctly → **Approve** → success message + 2 persisted test cases,
+   exactly as Phase 8 verified against local processes, now also verified
+   against the actual deployable images.
+9. Traceability Matrix and Audit Log pages both rendered real data from
+   the containerized stack (2 `stDataFrame` widgets on RTM — the matrix
+   itself plus a real coverage gap for the still-ungenerated second
+   requirement; 1 populated `stDataFrame` on Audit Log).
+10. Jira sync legitimately returned empty — `settings.jira_base_url` is
+    unset in this `.env` (no live Jira credentials in this environment,
+    same standing constraint as Decision 35/DESIGN.md §8), so
+    `_resume_and_persist` correctly never even attempts a sync call. Not
+    separately re-derived live: the UI's Approve button runs the exact
+    same `_resume_and_persist` code path the existing, passing
+    `test_full_lifecycle_generate_status_pending_approve` already asserts
+    `alm_sync == []` for under these same config conditions.
+11. **`platform.audit.verify_chain()` run directly against the real,
+    live-generated audit log (484 rows accumulated across this whole
+    project's history, including every action from this walkthrough) —
+    returned `True`.** The strongest verification the hash chain (ADR-0003)
+    has had yet: real production-shaped usage, not an isolated test
+    fixture tampering with one row and checking the detector fires.
+12. `ruff check .` / `mypy src tests scripts/seed_corpus.py` (strict) —
+    clean. `pytest -m "not eval"` — **140 passed**, unchanged (both real
+    bugs were containerization/deployment issues, not caught by — and not
+    expected to be caught by — the existing non-containerized test suite;
+    Decision 62's fix does get exercised indirectly through
+    `test_worker_tasks.py` importing `testgen.worker.tasks`, but no test
+    asserts on Celery's own task registry, which is exactly the gap that
+    let this ship unnoticed for four phases).
+13. Cleanup: `api`/`worker`/`ui` (compose-managed) and the standalone
+    verification `ui` container stopped; `postgres`/`redis` left running
+    (persistent local-dev convention, Environment section above). New test
+    data used a distinctive org name (`Phase11 Verification Org`) chosen
+    specifically to avoid Phase 8's `"Acme Health"` collision — confirmed
+    via grep against `tests/` before use, no cleanup needed after.
+
+**Browser-tooling note, not an app finding:** several UI interactions this
+phase needed a retry or a fresh tab before succeeding — one login attempt
+where `click`+`type` silently didn't reach the actual `<input>` element
+(confirmed via direct DOM inspection: the field's real `.value` stayed
+empty despite the tool reporting the keystrokes sent), recovered by
+switching to `form_input` and then, when that also needed a fresh tab to
+take effect, by simply opening a new tab. Verified directly each time that
+this was a browser-automation/tab-state issue and not the application: the
+exact same credentials worked instantly over direct HTTP, and the exact
+same click+type sequence worked correctly moments earlier and moments
+later in the same session. Recorded here so a future session doesn't waste
+time suspecting an app regression that isn't there.
+
+**Real bugs found + fixed this phase** (both are the reason Phase 11
+existed as a distinct phase rather than being folded into Phase 9):
+
+1. **`PermissionError` on the first real write to the `appdata` volume** —
+   see Decision 61. `api`/`worker` run as a non-root user, but a fresh
+   named Docker volume mounts owned by root by default; neither container
+   had ever actually written to that path before (Phase 9's verification
+   didn't upload a document or run a real generation). Fixed with
+   `chown`-before-`USER app` in both Dockerfiles, exploiting Docker's own
+   documented "seed an empty named volume from the image" behavior.
+2. **`generate_test_cases_task` was never registered with the real Celery
+   worker process** — see Decision 62. The single most consequential
+   finding across all 11 phases: every test through Phase 9 exercised
+   *enqueuing* (needs only a task name string) or called the underlying
+   function *directly* (bypassing Celery's registry entirely), so nothing
+   had ever proven a real `celery worker` process could actually consume a
+   real `generate_test_cases_task`. It couldn't have — fixed with Celery's
+   own `include=` mechanism on the `Celery()` constructor.
 
 **Committed:** yes — see git log.

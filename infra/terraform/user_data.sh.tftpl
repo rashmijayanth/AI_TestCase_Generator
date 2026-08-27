@@ -58,3 +58,13 @@ sed -i \
 
 export ECR_REGISTRY="${ecr_registry}"
 docker-compose -f docker-compose.yml -f infra/docker/docker-compose.prod.yml up -d
+
+# One-time: seed the regulatory corpus (scripts/seed_corpus.py) so the
+# Regulatory Researcher agent has clauses to retrieve from a stack that just
+# came up empty (docs/PROGRESS.md Phase 9/11: nothing else does this).
+# Idempotent (Decision 20) -- safe to leave in a boot script that could
+# technically rerun on instance replacement.
+for i in $(seq 1 30); do
+  docker-compose exec -T worker python scripts/seed_corpus.py && break
+  sleep 5
+done

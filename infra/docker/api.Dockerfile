@@ -27,6 +27,15 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY alembic.ini ./
 COPY alembic/ ./alembic/
 
+# docker-compose.yml mounts the appdata named volume at /app/data (Milvus
+# Lite's db file + LocalFilesystemStorage's uploaded-document blobs). A
+# fresh named volume is seeded from whatever's already at that path in the
+# image, ownership included -- pre-creating it here as root, owned by the
+# non-root `app` user below, is what lets that user actually write into it.
+# Confirmed live in Phase 11: without this, ingest_document()'s first real
+# upload crashed with PermissionError: [Errno 13] '/app/data/storage'.
+RUN mkdir -p /app/data && chown app:app /app/data
+
 ENV PYTHONUNBUFFERED=1
 
 USER app
