@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
     gemini_model_pro: str = "gemini-1.5-pro"
+    gemini_embedding_model: str = "text-embedding-004"
 
     jira_base_url: str = ""
     jira_email: str = ""

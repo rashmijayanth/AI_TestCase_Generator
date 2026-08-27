@@ -29,6 +29,8 @@ llm = [
     "langgraph>=0.2.45",
     "langchain>=0.3.7",
     "langchain-google-genai>=2.0.4",
+]
+embeddings = [
     "google-genai>=0.3",
 ]
 vectorstore = [
