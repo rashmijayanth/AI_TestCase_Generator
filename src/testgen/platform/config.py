@@ -27,6 +27,18 @@ class Settings(BaseSettings):
     jira_email: str = ""
     jira_api_token: str = ""
     jira_project_key: str = ""
+    jira_issue_type: str = "Task"
+
+    # Azure DevOps and Polarion have no live tenant available (DESIGN.md §8) --
+    # these exist so a real deployment could configure them, not because this
+    # environment ever connects live. See testgen.integrations.
+    ado_organization: str = ""
+    ado_project: str = ""
+    ado_pat: str = ""
+
+    polarion_base_url: str = ""
+    polarion_project_id: str = ""
+    polarion_token: str = ""
 
     storage_backend: Literal["local", "s3"] = "local"
     storage_local_path: str = "./data/storage"

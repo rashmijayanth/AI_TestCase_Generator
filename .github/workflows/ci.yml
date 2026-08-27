@@ -5,9 +5,38 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  DATABASE_URL: postgresql+psycopg://testgen:changeme@localhost:5432/testgen
+  REDIS_URL: redis://localhost:6379/0
+
 jobs:
   lint-type-test:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: testgen
+          POSTGRES_USER: testgen
+          POSTGRES_PASSWORD: changeme
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U testgen"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -15,8 +44,17 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dev dependencies
-        run: pip install -e ".[dev]"
+      # [dev,all] rather than per-phase extras: this is a from-scratch CI
+      # runner every time (no benefit to installing incrementally like local
+      # dev does), and one install line is much less to keep in sync across
+      # phases than a growing per-phase list. Milvus Lite needs no service
+      # (embedded, file-based); Presidio needs the spaCy model downloaded
+      # separately, below.
+      - name: Install dependencies
+        run: pip install -e ".[dev,all]"
+
+      - name: Download spaCy model (Presidio)
+        run: python -m spacy download en_core_web_sm
 
       - name: Ruff lint
         run: ruff check .
@@ -27,8 +65,17 @@ jobs:
       - name: Mypy
         run: mypy src tests
 
+      - name: Apply database migrations
+        run: alembic upgrade head
+
+      # Only "eval" is excluded: it makes real Gemini calls to judge output
+      # quality (DESIGN.md's LLM generation runs / prompt evaluation), and no
+      # GEMINI_API_KEY secret is configured for this repo. unit/integration/
+      # contract all run here -- integration hits the Postgres/Redis services
+      # above and embedded Milvus Lite; contract uses httpx.MockTransport
+      # (no network at all).
       - name: Pytest
-        run: pytest -m "not integration and not contract and not eval" --cov=testgen --cov-report=term-missing
+        run: pytest -m "not eval" --cov=testgen --cov-report=term-missing
 
   security-scan:
     runs-on: ubuntu-latest
