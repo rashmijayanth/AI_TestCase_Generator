@@ -35,3 +35,13 @@ data/
 *.db
 *.sqlite3
 volumes/
+
+# Terraform (infra/terraform/) -- state and per-operator vars are never
+# committed; .terraform.lock.hcl IS committed (pins provider versions).
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!terraform.tfvars.example
+crash.log
+crash.*.log

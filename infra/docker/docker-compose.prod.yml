@@ -1,0 +1,16 @@
+# Production override: `docker-compose -f docker-compose.yml -f infra/docker/docker-compose.prod.yml up -d`
+# pulls the 3 prebuilt ECR images instead of building locally on the instance
+# (docker-compose.yml's `build:` blocks are for local dev). ECR_REGISTRY is
+# provided by ec2.tf's user_data (e.g. 123456789.dkr.ecr.us-east-1.amazonaws.com).
+services:
+  api:
+    image: ${ECR_REGISTRY}/testgen-ai/api:latest
+    build: !reset null
+
+  worker:
+    image: ${ECR_REGISTRY}/testgen-ai/worker:latest
+    build: !reset null
+
+  ui:
+    image: ${ECR_REGISTRY}/testgen-ai/ui:latest
+    build: !reset null

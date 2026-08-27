@@ -3,6 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,7 +17,17 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://localhost:6379/0"
 
-    milvus_uri: str = "./data/milvus_lite.db"
+    # pymilvus itself reads a real OS env var literally named MILVUS_URI for
+    # its own internal connection default (confirmed by reading
+    # pymilvus.orm.connections' source) -- colliding with the env var
+    # pydantic-settings would otherwise auto-derive from this field's name.
+    # Only surfaces where MILVUS_URI becomes a real process env var (e.g. a
+    # container's `environment:`/`env_file:`, not this app's own .env-file
+    # loading) -- confirmed live via `docker compose up`, where it broke both
+    # the api and worker containers at import time. Renamed the env var, not
+    # the Python attribute, so every existing `settings.milvus_uri` call site
+    # stays unchanged.
+    milvus_uri: str = Field(default="./data/milvus_lite.db", validation_alias="MILVUS_DB_URI")
 
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"

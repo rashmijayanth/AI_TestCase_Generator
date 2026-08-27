@@ -25,9 +25,63 @@ services:
       timeout: 5s
       retries: 10
 
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-testgen}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-testgen}
+      REDIS_URL: redis://redis:6379/0
+      MILVUS_DB_URI: /app/data/milvus_lite.db
+      STORAGE_LOCAL_PATH: /app/data/storage
+    ports:
+      - "8000:8000"
+    volumes:
+      - appdata:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/worker.Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-testgen}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-testgen}
+      REDIS_URL: redis://redis:6379/0
+      MILVUS_DB_URI: /app/data/milvus_lite.db
+      STORAGE_LOCAL_PATH: /app/data/storage
+    volumes:
+      - appdata:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  ui:
+    build:
+      context: .
+      dockerfile: infra/docker/ui.Dockerfile
+    env_file: .env
+    environment:
+      API_BASE_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+
 volumes:
   pgdata:
+  # Shared between api/worker: Milvus Lite's embedded db file (knowledge base)
+  # and LocalFilesystemStorage's uploaded-document blobs (platform/storage.py)
+  # both need to be the same files regardless of which container touches them.
+  appdata:
 
-# api / worker / ui services are added once their Dockerfiles exist (see docs/PROGRESS.md).
-# A milvus standalone service is added in the Knowledge/RAG phase if milvus-lite proves
-# unavailable on Windows (it has historically shipped Linux/macOS wheels only).
+# A milvus standalone service is added here in a future phase if milvus-lite
+# proves unavailable in some other environment (it worked fine on Windows --
+# Decision 5).

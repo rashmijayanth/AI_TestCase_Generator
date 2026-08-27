@@ -1,0 +1,60 @@
+#!/bin/bash
+# Bootstraps a fresh Amazon Linux 2023 instance into a running docker-compose
+# stack. Installs Docker, logs into ECR, clones this repo, fetches the two
+# Secrets Manager secrets into the .env file docker-compose.yml already
+# expects (env_file: .env), then starts the stack using
+# infra/docker/docker-compose.prod.yml to pull the 3 prebuilt ECR images
+# instead of building on the instance -- verified locally (`docker compose
+# -f docker-compose.yml -f infra/docker/docker-compose.prod.yml config`)
+# that its `build: !reset null` correctly drops the local-dev build: block
+# in favor of `image:`, not merges alongside it.
+set -euo pipefail
+
+dnf install -y docker git
+systemctl enable --now docker
+usermod -aG docker ec2-user
+
+curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
+  -o /usr/local/bin/docker-compose
+chmod +x /usr/local/bin/docker-compose
+
+aws ecr get-login-password --region ${aws_region} | \
+  docker login --username AWS --password-stdin "${ecr_registry}"
+
+install -d -m 0755 -o ec2-user -g ec2-user /opt/${project_name}
+cd /opt/${project_name}
+git clone --depth 1 "${repo_url}" app
+cd app
+
+# Real values for GEMINI_API_KEY/JWT_SECRET_KEY/JIRA_* come from app_secrets
+# (secrets.tf) -- set out-of-band after apply (Terraform never generates
+# third-party API keys), so this .env has them as placeholders until then.
+DB_CREDS=$(aws secretsmanager get-secret-value --region ${aws_region} \
+  --secret-id "${db_credentials_secret_arn}" --query SecretString --output text)
+APP_SECRETS=$(aws secretsmanager get-secret-value --region ${aws_region} \
+  --secret-id "${app_secrets_secret_arn}" --query SecretString --output text)
+
+DB_PASSWORD=$(echo "$DB_CREDS" | python3 -c "import json,sys; print(json.load(sys.stdin)['password'])")
+GEMINI_API_KEY=$(echo "$APP_SECRETS" | python3 -c "import json,sys; print(json.load(sys.stdin)['GEMINI_API_KEY'])")
+JWT_SECRET_KEY=$(echo "$APP_SECRETS" | python3 -c "import json,sys; print(json.load(sys.stdin)['JWT_SECRET_KEY'])")
+JIRA_API_TOKEN=$(echo "$APP_SECRETS" | python3 -c "import json,sys; print(json.load(sys.stdin)['JIRA_API_TOKEN'])")
+JIRA_EMAIL=$(echo "$APP_SECRETS" | python3 -c "import json,sys; print(json.load(sys.stdin)['JIRA_EMAIL'])")
+JIRA_BASE_URL=$(echo "$APP_SECRETS" | python3 -c "import json,sys; print(json.load(sys.stdin)['JIRA_BASE_URL'])")
+JIRA_PROJECT_KEY=$(echo "$APP_SECRETS" | python3 -c "import json,sys; print(json.load(sys.stdin)['JIRA_PROJECT_KEY'])")
+
+cp .env.example .env
+sed -i \
+  -e "s#^POSTGRES_PASSWORD=.*#POSTGRES_PASSWORD=$DB_PASSWORD#" \
+  -e "s#^GEMINI_API_KEY=.*#GEMINI_API_KEY=$GEMINI_API_KEY#" \
+  -e "s#^JWT_SECRET_KEY=.*#JWT_SECRET_KEY=$JWT_SECRET_KEY#" \
+  -e "s#^JIRA_API_TOKEN=.*#JIRA_API_TOKEN=$JIRA_API_TOKEN#" \
+  -e "s#^JIRA_EMAIL=.*#JIRA_EMAIL=$JIRA_EMAIL#" \
+  -e "s#^JIRA_BASE_URL=.*#JIRA_BASE_URL=$JIRA_BASE_URL#" \
+  -e "s#^JIRA_PROJECT_KEY=.*#JIRA_PROJECT_KEY=$JIRA_PROJECT_KEY#" \
+  -e "s#^STORAGE_BACKEND=.*#STORAGE_BACKEND=s3#" \
+  -e "s#^S3_BUCKET=.*#S3_BUCKET=${s3_bucket_name}#" \
+  -e "s#^AWS_REGION=.*#AWS_REGION=${aws_region}#" \
+  .env
+
+export ECR_REGISTRY="${ecr_registry}"
+docker-compose -f docker-compose.yml -f infra/docker/docker-compose.prod.yml up -d
