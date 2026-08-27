@@ -136,27 +136,6 @@ def test_test_data_synthesizer_skips_when_no_data_driven_cases() -> None:
 
 
 @pytest.mark.unit
-def test_test_data_synthesizer_generates_dataset_for_data_driven_case() -> None:
-    response = '{"name": "occlusion-timing-values", "rows": [{"delay_ms": 499}, {"delay_ms": 500}]}'
-    deps = _deps(ScriptedChatModelFactory({"TestDatasetDraftOutput": [response]}))
-    state = new_generation_state("req-1", "text")
-    state["draft_test_cases"] = [
-        {
-            "title": "Boundary timing",
-            "test_type": "data_driven",
-            "steps": [{"step_no": 1, "action": "vary delay", "expected": "..."}],
-        }
-    ]
-
-    result = data_synthesizer_node(state, deps=deps)
-
-    [dataset] = result["draft_test_datasets"]
-    assert dataset["name"] == "occlusion-timing-values"
-    assert dataset["phi_redacted"] is False
-    assert len(dataset["data"]) == 2
-
-
-@pytest.mark.unit
 def test_traceability_agent_flags_missing_coverage() -> None:
     deps = _deps(ScriptedChatModelFactory({}))
     state = new_generation_state("req-1", "text")

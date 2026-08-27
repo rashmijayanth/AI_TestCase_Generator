@@ -1,19 +1,24 @@
-"""Integration tests for the two agent nodes that genuinely need a working
-vector store: Regulatory Researcher (bounded retrieval loop) and Compliance
-Critic (independent re-retrieval). Real Milvus Lite (tmp_path) + the seeded
-corpus + DeterministicFakeEmbedder; every LLM call is scripted.
+"""Integration tests for agent nodes that need a real dependency beyond a
+scripted LLM: Regulatory Researcher and Compliance Critic need a working
+vector store (real Milvus Lite, tmp_path); Test Data Synthesizer now needs
+real Presidio redaction (Phase 5) rather than a scripted/fake pass.
 """
 
 from pathlib import Path
 
 import pytest
 
-from testgen.generation.agents import AgentDeps, compliance_critic_node, regulatory_researcher_node
+from testgen.generation.agents import (
+    AgentDeps,
+    compliance_critic_node,
+    data_synthesizer_node,
+    regulatory_researcher_node,
+)
 from testgen.generation.state import new_generation_state
 from testgen.knowledge.corpus import seed_regulatory_corpus
 from testgen.knowledge.embeddings import EMBEDDING_DIMENSION, DeterministicFakeEmbedder
 from testgen.knowledge.vector_store import MilvusVectorStore
-from tests.fakes import ScriptedChatModelFactory
+from tests.fakes import ScriptedChatModelFactory, UnusedEmbedder, UnusedVectorStore
 
 
 def _seeded_store(tmp_path: Path, embedder: DeterministicFakeEmbedder) -> MilvusVectorStore:
@@ -119,3 +124,38 @@ def test_compliance_critic_approves_when_scripted_to(tmp_path: Path) -> None:
     result = compliance_critic_node(state, deps=deps)
 
     assert result["critic_approved"] is True
+
+
+@pytest.mark.integration
+def test_data_synthesizer_redacts_via_real_presidio_and_marks_phi_redacted() -> None:
+    """Synthetic data is fake by construction (see the agent's prompt), but this
+    confirms the actual Presidio pass (Phase 5) runs and the honest phi_redacted
+    flag flips to True once it does -- not just that the prompt asked nicely.
+    """
+    response = (
+        '{"name": "occlusion-timing-values", '
+        '"rows": [{"delay_ms": 499, "patient_name": "Jane Doe"}, '
+        '{"delay_ms": 500, "patient_name": "Jane Doe"}]}'
+    )
+    deps = AgentDeps(
+        chat_model_factory=ScriptedChatModelFactory({"TestDatasetDraftOutput": [response]}),
+        embedder=UnusedEmbedder(),
+        vector_store=UnusedVectorStore(),
+    )
+    state = new_generation_state("req-1", "text")
+    state["draft_test_cases"] = [
+        {
+            "title": "Boundary timing",
+            "test_type": "data_driven",
+            "steps": [{"step_no": 1, "action": "vary delay", "expected": "..."}],
+        }
+    ]
+
+    result = data_synthesizer_node(state, deps=deps)
+
+    [dataset] = result["draft_test_datasets"]
+    assert dataset["name"] == "occlusion-timing-values"
+    assert dataset["phi_redacted"] is True
+    assert len(dataset["data"]) == 2
+    assert dataset["data"][0]["delay_ms"] == 499
+    assert "Jane Doe" not in dataset["data"][0]["patient_name"]

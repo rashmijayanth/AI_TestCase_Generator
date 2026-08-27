@@ -229,6 +229,11 @@ named dataset."""
 
 
 def data_synthesizer_node(state: GenerationState, *, deps: AgentDeps) -> dict[str, Any]:
+    # Lazy import: keeps this module importable without the `compliance` extra
+    # (presidio-analyzer/-anonymizer + a spaCy model) installed, for any test or
+    # caller that never exercises data-driven test cases.
+    from testgen.compliance.redaction import redact_dataset_rows
+
     data_driven_cases = [
         tc for tc in state["draft_test_cases"] if tc["test_type"] == TestType.DATA_DRIVEN.value
     ]
@@ -244,10 +249,12 @@ def data_synthesizer_node(state: GenerationState, *, deps: AgentDeps) -> dict[st
         )
         response = llm.invoke(prompt)
         parsed = TestDatasetDraftOutput.model_validate_json(content_str(response))
-        # phi_redacted is deliberately False here: Presidio redaction is the
-        # compliance bounded context's job (Phase 5, not yet built) -- see
-        # docs/PROGRESS.md for the cross-phase note on wiring it in.
-        datasets.append({"name": parsed.name, "data": parsed.rows, "phi_redacted": False})
+        # The prompt asks for obviously-synthetic values, but this Presidio pass
+        # (testgen.compliance, Phase 5) is the actual safety net DESIGN.md §3
+        # lists as this agent's tool -- belt and suspenders before anything
+        # resembling PHI could reach a stored dataset.
+        redacted_rows = redact_dataset_rows(parsed.rows)
+        datasets.append({"name": parsed.name, "data": redacted_rows, "phi_redacted": True})
 
     return {"draft_test_datasets": datasets}
 
