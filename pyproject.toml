@@ -97,6 +97,7 @@ dev = [
     "pre-commit>=4.0",
     "faker>=30.8",
     "types-redis",
+    "lxml-stubs>=0.5",
 ]
 
 [tool.hatch.build.targets.wheel]

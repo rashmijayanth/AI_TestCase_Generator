@@ -2,7 +2,7 @@
 
 > If resuming this project in a new session: read `docs/DESIGN.md` first (locked source of truth for *what* to build), then this file (tracks *how far we've gotten* and *what to do next*). Don't re-derive anything below by re-reading the whole codebase — it's kept current on purpose.
 
-**Next Action:** Begin Phase 2 (ingestion). Build `testgen.ingestion`: parsers for PDF (`pypdf`), DOCX (`python-docx`), XML/ReqIF (`lxml`), and Markdown (`markdown-it-py`) that normalize into `Requirement` rows (already modeled in Phase 1) with `source_span_start`/`source_span_end` populated for traceability. Needs the `ingestion` extra installed (`pip install -e ".[dev,db,ingestion]"`). A `StoragePort` (local filesystem for dev, per DESIGN.md §7) for storing the uploaded `SourceDocument` file behind `storage_key` belongs here too, or could be split into its own `platform.storage` module if it turns out multiple contexts need it — decide when writing it, not before.
+**Next Action:** Begin Phase 3 (knowledge/RAG). Build `testgen.knowledge`: embeddings + `VectorStorePort` (Milvus) + a seeded regulatory corpus (FDA/IEC 62304/ISO 9001/ISO 13485/ISO 27001/GDPR clause text, chunked). **First thing to check**: whether `milvus-lite` actually installs on this Windows machine (`pip install milvus-lite` in the venv) — see the risk note logged in Phase 1's decisions. If it fails, fall back to a `milvus-standalone` docker-compose service instead of embedded lite, update DESIGN.md §7's "local dev footprint" line accordingly, and note it here.
 
 ---
 
@@ -12,7 +12,7 @@
 |---|-------|--------|-------|
 | 0 | Scaffolding | Done (2026-08-27) | Repo skeleton, tooling, CI, docker-compose (Postgres+Redis) |
 | 1 | Domain / platform | Done (2026-08-27) | Config, logging, tracing, full SQLAlchemy schema (13 tables), Alembic, hash-chained audit log |
-| 2 | Ingestion | Not started | PDF/DOCX/ReqIF/XML/Markdown → Requirement objects |
+| 2 | Ingestion | Done (2026-08-27) | 5 format parsers, deterministic requirement splitter, StoragePort, ingest_document() |
 | 3 | Knowledge / RAG | Not started | Milvus + regulatory corpus — see risk note below |
 | 4 | Generation (multi-agent) | Not started | LangGraph StateGraph, 7 agents |
 | 5 | Traceability / compliance | Not started | RTM, coverage gaps, Presidio redaction, GDPR rights |
@@ -50,6 +50,10 @@ Decisions made while executing DESIGN.md that aren't spelled out verbatim in it,
 12. **Local username/password auth implied by `users.hashed_password`.** DESIGN.md §7 says "OAuth2/JWT + RBAC" without naming an external IdP, so Phase 7 (API) will implement FastAPI's standard OAuth2-password-flow + self-issued JWTs rather than integrating a third-party identity provider — simplest thing that satisfies the stated requirement.
 13. **pytest `python_classes = ["*Tests"]`** (suffix, not prefix). This domain's own vocabulary is full of `Test*`-prefixed names (`TestCase`, `TestType`, `TestPriority`, `TestCaseStatus`, and per DESIGN.md §3, agent names like "Test Strategist") that collide with pytest's default `Test*` class-collection pattern. Fixed once, globally, rather than adding `__test__ = False` to every such class as the codebase grows.
 14. **`alembic/versions/` excluded from ruff's lint scope** (`extend-exclude` in `pyproject.toml`). Alembic's autogenerate template doesn't emit ruff-modern-style code (`Union[]` instead of `X | Y`, its own import order) and there's no value in hand-fixing that boilerplate on every future migration. `alembic/env.py` itself is hand-written wiring code and stays fully linted/typed.
+15. **Ingestion/generation phase boundary**: ingestion (Phase 2) only ever writes `Requirement` rows with `status=EXTRACTED` and `safety_class=None`. DESIGN.md §3 gives the Requirement Analyst agent (Phase 4, LLM-based) the job of "extract[ing] discrete requirements from parsed source text, disambiguat[ing], classif[ying]... safety class" — so ingestion's `requirement_splitter.py` is deliberately mechanical (paragraph + modal-verb regex, no LLM call), producing *candidates* good enough to seed that agent, not final ground truth. `RequirementStatus.CLASSIFIED`/`NEEDS_REVIEW` are set later, by Phase 4.
+16. **`StoragePort` lives in `platform`, not `ingestion`.** DESIGN.md §7 calls it out as its own tech-stack layer ("Object storage... behind StoragePort"), not ingestion-specific — later phases (e.g. exporting an RTM, storing synthetic datasets) are plausible future callers too. `LocalFilesystemStorage` implemented now (structural `Protocol`, no explicit inheritance needed); `S3Storage` deliberately raises `NotImplementedError` with a pointer to the Infra phase rather than a fake/partial implementation, since there's no real AWS account to test against (DESIGN.md §8).
+17. **ReqIF parser handles the common case, not the full OMG spec.** Extracts `SPEC-OBJECT` → `THE-VALUE` text; no attribute-definition/datatype resolution, no spec-hierarchy tree. ReqIF is one of five supported formats and not the one the interview demo centers on (PDF/DOCX/Jira are) — a real, working, honestly-scoped adapter beats either skipping it or pretending it's spec-complete.
+18. **`get_settings()`'s `lru_cache` needs explicit clearing in tests.** Added an autouse `tests/conftest.py` fixture (`get_settings.cache_clear()` before every test) once Phase 2 introduced the first test that depends on `get_settings()`-derived behavior (`get_storage()`). Without it, whichever test happened to call `get_settings()` first in a session would leak its cached instance into every later test — a real, if latent, cross-test correctness bug worth closing now rather than after it causes a flaky failure.
 
 ---
 
@@ -80,5 +84,23 @@ All green:
 4. `mypy --strict` also failed on `logging.get_logger`: `structlog.get_logger()` types as returning `Any`. Fixed with an explicit `cast(structlog.stdlib.BoundLogger, ...)`, matching structlog's own documented pattern for use under strict mypy.
 5. `pytest` tried to collect `TestCase`, `TestDataset`, `TestType`, `TestPriority`, `TestCaseStatus` as test classes (pytest's default `Test*` collection pattern colliding with this domain's own vocabulary) and warned that each "cannot collect... because it has a `__init__` constructor." Fixed globally via `python_classes = ["*Tests"]` in pytest config (see Decision 13) rather than patching every current and future colliding class.
 6. A real, if minor, test-fixture bug: `tests/integration/test_db_models.py::test_compliance_mapping_requires_exactly_one_artifact` deliberately triggers a flush-time `IntegrityError`. SQLAlchemy responds to that by auto-rolling-back the connection-bound transaction internally — which is the *same* transaction object the `db_session` fixture's `finally` block was unconditionally calling `.rollback()` on again, producing `SAWarning: transaction already deassociated from connection`. Fixed with an `if transaction.is_active:` guard in `tests/integration/conftest.py` before calling rollback in teardown.
+
+**Committed:** yes — see git log.
+
+---
+
+## Phase 2 Verification (2026-08-27)
+
+All green:
+
+- `pip install -e ".[dev,db,ingestion]"` — pypdf 6.16.2, python-docx 1.2.0, lxml 6.1.2, markdown-it-py 4.2.0
+- `ruff format .` / `ruff check .` — clean
+- `mypy src tests` (strict) — 0 issues, 45 files (after installing `lxml-stubs` — see bug #2 below)
+- `pytest --cov=testgen` — **31 passed**, 90% coverage. Same deliberately-deferred 0%/partial modules as Phase 1 (`logging.py`, `tracing.py`, parts of `db/session.py`) — still not wired to anything real yet.
+
+**Real bugs hit + fixes this phase:**
+
+1. **`parse_markdown` returned raw markdown syntax, not plain text** — first draft read `token.content` off each top-level `inline` token, but markdown-it-py documents that field as the *original source text* of the inline span, asterisks and all; the de-markup'd text actually lives on that token's `.children` (`text`/`code_inline` sub-tokens, with `strong_open`/`strong_close`/etc. marking formatting boundaries around them). Caught by `test_parse_markdown_strips_markup` actually failing (`'**' in text`), not by inspection. Fixed by walking `token.children` and joining only `text`/`code_inline` content.
+2. **`mypy` failed on missing `lxml` stubs** (`import-untyped`). Rather than blanket-suppress like the LLM/queue libraries in Phase 0's mypy overrides (which genuinely have no good stubs), installed `lxml-stubs` (a real, maintained stub package) instead — and it immediately caught a second, real issue: `Element.itertext()` is typed to yield `str | bytes`, not just `str`, so joining its output directly failed strict mypy. Fixed by decoding `bytes` items before joining, in `parse_xml` — a genuine correctness fix (mixed-content XML can yield bytes at the C level), not just a type-checker appeasement.
 
 **Committed:** yes — see git log.
