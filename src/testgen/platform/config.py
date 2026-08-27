@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     gemini_model_pro: str = "gemini-1.5-pro"
     gemini_embedding_model: str = "text-embedding-004"
 
+    # Obviously-a-placeholder default so local dev/tests work with zero setup,
+    # but so it's unmistakable this must be overridden for staging/prod.
+    jwt_secret_key: str = "dev-insecure-secret-change-in-production"
+    jwt_expire_hours: int = 8
+
     jira_base_url: str = ""
     jira_email: str = ""
     jira_api_token: str = ""

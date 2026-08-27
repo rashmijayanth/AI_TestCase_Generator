@@ -50,6 +50,47 @@ def build_default_deps(settings: Settings | None = None) -> AgentDeps:
     )
 
 
+class _UnreachableChatModel(BaseChatModel):
+    """A genuine BaseChatModel subclass (not a duck-typed stand-in) so
+    AgentDeps.chat_model_factory's Callable[..., BaseChatModel] type stays
+    honest -- every real code path always raises before this would matter.
+    """
+
+    @property
+    def _llm_type(self) -> str:
+        raise AssertionError("read-only deps' chat model should never actually be invoked")
+
+    def _generate(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("read-only deps' chat model should never actually be invoked")
+
+
+class _UnreachableEmbedder:
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        raise AssertionError("read-only deps' embedder should never actually be invoked")
+
+
+class _UnreachableVectorStore:
+    def upsert_clauses(self, clauses: Any) -> None:
+        raise AssertionError("read-only deps' vector store should never actually be invoked")
+
+    def search(self, query_vector: Any, top_k: int = 5) -> Any:
+        raise AssertionError("read-only deps' vector store should never actually be invoked")
+
+
+def build_readonly_deps() -> AgentDeps:
+    """AgentDeps for building a compiled graph purely to call get_state() on it
+    (e.g. an API status-check endpoint) -- reading a persisted checkpoint never
+    executes a node, so nothing here needs to actually work or need a real
+    GEMINI_API_KEY. Every method raises loudly if that assumption ever turns
+    out wrong, rather than silently doing something unexpected.
+    """
+    return AgentDeps(
+        chat_model_factory=lambda **_kwargs: _UnreachableChatModel(),
+        embedder=_UnreachableEmbedder(),
+        vector_store=_UnreachableVectorStore(),
+    )
+
+
 def _format_clauses(clauses: list[dict[str, Any]] | list[ClauseMatch]) -> str:
     lines = []
     for clause in clauses:
@@ -254,7 +295,18 @@ def data_synthesizer_node(state: GenerationState, *, deps: AgentDeps) -> dict[st
         # lists as this agent's tool -- belt and suspenders before anything
         # resembling PHI could reach a stored dataset.
         redacted_rows = redact_dataset_rows(parsed.rows)
-        datasets.append({"name": parsed.name, "data": redacted_rows, "phi_redacted": True})
+        datasets.append(
+            {
+                "name": parsed.name,
+                "data": redacted_rows,
+                "phi_redacted": True,
+                # Links this dataset back to its owning draft test case (by
+                # title -- distinct enough within one generation run) so the
+                # orchestration layer (Phase 7) can set TestDataset.test_case_id
+                # correctly once the test cases become real rows.
+                "test_case_title": test_case["title"],
+            }
+        )
 
     return {"draft_test_datasets": datasets}
 

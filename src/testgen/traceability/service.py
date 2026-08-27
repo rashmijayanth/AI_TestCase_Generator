@@ -31,7 +31,11 @@ def create_traceability_link(
 
 
 def lock_traceability_links_for_requirement(
-    session: Session, *, requirement_id: uuid.UUID, approver_id: uuid.UUID
+    session: Session,
+    *,
+    requirement_id: uuid.UUID,
+    approver_id: uuid.UUID,
+    organization_id: uuid.UUID,
 ) -> list[TraceabilityLink]:
     """The Human Approval step (DESIGN.md §2): locks every unlocked link for this
     requirement and records one audit log entry per link locked.
@@ -56,6 +60,7 @@ def lock_traceability_links_for_requirement(
             entity_type="traceability_link",
             entity_id=link.id,
             payload={"requirement_id": str(requirement_id), "test_case_id": str(link.test_case_id)},
+            organization_id=organization_id,
             actor_user_id=approver_id,
         )
     session.flush()

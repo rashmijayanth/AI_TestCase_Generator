@@ -94,7 +94,10 @@ def test_link_creation_starts_unlocked_then_lock_sets_audit_trail(db_session: Se
     assert link.locked_by is None
 
     locked = lock_traceability_links_for_requirement(
-        db_session, requirement_id=requirement.id, approver_id=user.id
+        db_session,
+        requirement_id=requirement.id,
+        approver_id=user.id,
+        organization_id=project.organization_id,
     )
 
     assert len(locked) == 1
@@ -112,10 +115,16 @@ def test_locking_is_idempotent_for_already_locked_links(db_session: Session) -> 
     create_traceability_link(db_session, requirement_id=requirement.id, test_case_id=test_case.id)
 
     first = lock_traceability_links_for_requirement(
-        db_session, requirement_id=requirement.id, approver_id=user.id
+        db_session,
+        requirement_id=requirement.id,
+        approver_id=user.id,
+        organization_id=project.organization_id,
     )
     second = lock_traceability_links_for_requirement(
-        db_session, requirement_id=requirement.id, approver_id=user.id
+        db_session,
+        requirement_id=requirement.id,
+        approver_id=user.id,
+        organization_id=project.organization_id,
     )
 
     assert len(first) == 1

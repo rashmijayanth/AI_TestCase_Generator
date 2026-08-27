@@ -156,6 +156,7 @@ def test_data_synthesizer_redacts_via_real_presidio_and_marks_phi_redacted() -> 
     [dataset] = result["draft_test_datasets"]
     assert dataset["name"] == "occlusion-timing-values"
     assert dataset["phi_redacted"] is True
+    assert dataset["test_case_title"] == "Boundary timing"
     assert len(dataset["data"]) == 2
     assert dataset["data"][0]["delay_ms"] == 499
     assert "Jane Doe" not in dataset["data"][0]["patient_name"]
