@@ -38,7 +38,14 @@ class GeminiEmbedder:
         self._model = model
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        result = self._client.models.embed_content(model=self._model, contents=texts)
+        # list[str] is a valid runtime argument (confirmed via signature
+        # introspection: contents accepts list[str | Image | File | Part | ...]),
+        # but mypy's strict invariant-generics rule doesn't consider list[str]
+        # assignable to a differently-parameterized list[...] union member.
+        result = self._client.models.embed_content(
+            model=self._model,
+            contents=texts,  # type: ignore[arg-type]
+        )
         return _extract_vectors(result)
 
 

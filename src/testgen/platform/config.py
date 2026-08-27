@@ -52,6 +52,11 @@ class Settings(BaseSettings):
 
     otel_exporter_otlp_endpoint: str = ""
 
+    # The Streamlit UI is a separate process that talks to the API only over
+    # HTTP (DESIGN.md §6) -- never imports testgen.api directly -- so it needs
+    # the API's base URL, not just an in-process app object.
+    api_base_url: str = "http://localhost:8000"
+
 
 @lru_cache
 def get_settings() -> Settings:
