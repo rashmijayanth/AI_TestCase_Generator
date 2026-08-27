@@ -1,0 +1,1 @@
+Reserved for Terraform IaC (VPC/EC2/S3/ECR/Secrets Manager/IAM) per `docs/DESIGN.md` §7 — written to a real standard but not `terraform apply`'d. Added in the Infra phase. See `docs/PROGRESS.md` for phase status.

@@ -1,0 +1,150 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "testgen-ai"
+version = "0.1.0"
+description = "AI-powered generation of compliant, traceable test cases from healthcare software requirements"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = { text = "Proprietary" }
+
+dependencies = [
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+]
+
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+]
+db = [
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
+]
+llm = [
+    "langgraph>=0.2.45",
+    "langchain>=0.3.7",
+    "langchain-google-genai>=2.0.4",
+    "google-genai>=0.3",
+]
+vectorstore = [
+    "pymilvus>=2.4.9",
+    "milvus-lite>=2.4.9",
+]
+queue = [
+    "celery>=5.4",
+    "redis>=5.1",
+]
+ingestion = [
+    "pypdf>=5.0",
+    "python-docx>=1.1",
+    "lxml>=5.3",
+    "markdown-it-py>=3.0",
+]
+compliance = [
+    "presidio-analyzer>=2.2.355",
+    "presidio-anonymizer>=2.2.355",
+]
+ui = [
+    "streamlit>=1.39",
+]
+observability = [
+    "structlog>=24.4",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp>=1.27",
+]
+integrations = [
+    "httpx>=0.27",
+    "jira>=3.8",
+]
+all = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
+    "langgraph>=0.2.45",
+    "langchain>=0.3.7",
+    "langchain-google-genai>=2.0.4",
+    "google-genai>=0.3",
+    "pymilvus>=2.4.9",
+    "milvus-lite>=2.4.9",
+    "celery>=5.4",
+    "redis>=5.1",
+    "pypdf>=5.0",
+    "python-docx>=1.1",
+    "lxml>=5.3",
+    "markdown-it-py>=3.0",
+    "presidio-analyzer>=2.2.355",
+    "presidio-anonymizer>=2.2.355",
+    "streamlit>=1.39",
+    "structlog>=24.4",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp>=1.27",
+    "httpx>=0.27",
+    "jira>=3.8",
+]
+dev = [
+    "ruff>=0.7.4",
+    "mypy>=1.13",
+    "pytest>=8.3.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "pre-commit>=4.0",
+    "faker>=30.8",
+    "types-redis",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/testgen"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["testgen"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+explicit_package_bases = true
+strict = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = [
+    "pymilvus.*",
+    "milvus_lite.*",
+    "presidio_analyzer.*",
+    "presidio_anonymizer.*",
+    "celery.*",
+    "jira.*",
+    "langchain.*",
+    "langchain_google_genai.*",
+    "langgraph.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra --strict-markers"
+markers = [
+    "unit: fast, no external services",
+    "integration: requires local services (Postgres/Redis/Milvus)",
+    "contract: contract tests against recorded fixtures (ADO/Polarion)",
+    "eval: LLM output quality evals (real Gemini calls, run separately/less often)",
+]
+
+[tool.coverage.run]
+source = ["src/testgen"]
