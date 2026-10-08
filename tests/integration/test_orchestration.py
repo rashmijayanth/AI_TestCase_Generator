@@ -9,7 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from testgen.generation.models import TestDataset
-from testgen.generation.orchestration import persist_generation_result
+from testgen.generation.orchestration import (
+    persist_generation_result,
+    persist_llm_usage,
+    project_llm_usage_summary,
+)
 from testgen.generation.state import GenerationState, new_generation_state
 from testgen.ingestion.models import Requirement, SourceDocument
 from testgen.platform.audit import verify_chain
@@ -179,3 +183,42 @@ def test_persist_generation_result_rejects_approval_with_no_approver(db_session:
             final_state=state,
             model_name="gemini-2.0-flash",
         )
+
+
+@pytest.mark.integration
+def test_persist_llm_usage_and_summary_aggregate_by_agent(db_session: Session) -> None:
+    project, requirement, _user = _make_requirement_and_user(db_session)
+    usage_log = [
+        {"agent_name": "requirement_analyst", "model": "gemini-2.5-flash",
+         "input_tokens": 200, "output_tokens": 50, "latency_ms": 800},
+        {"agent_name": "test_case_generator", "model": "gemini-2.5-flash",
+         "input_tokens": 900, "output_tokens": 1100, "latency_ms": 4200},
+        {"agent_name": "test_case_generator", "model": "gemini-2.5-flash",
+         "input_tokens": 950, "output_tokens": 1200, "latency_ms": 4500},
+    ]
+
+    persist_llm_usage(db_session, requirement_id=requirement.id, usage_log=usage_log)
+    db_session.commit()
+
+    summary = {
+        row.agent_name: row
+        for row in project_llm_usage_summary(db_session, project_id=project.id)
+    }
+
+    assert summary["requirement_analyst"].call_count == 1
+    assert summary["requirement_analyst"].total_input_tokens == 200
+
+    generator_row = summary["test_case_generator"]
+    assert generator_row.call_count == 2
+    assert generator_row.total_input_tokens == 900 + 950
+    assert generator_row.total_output_tokens == 1100 + 1200
+    assert generator_row.avg_latency_ms == pytest.approx((4200 + 4500) / 2)
+
+
+@pytest.mark.integration
+def test_project_llm_usage_summary_empty_for_project_with_no_generation_runs(
+    db_session: Session,
+) -> None:
+    project, _requirement, _user = _make_requirement_and_user(db_session)
+
+    assert project_llm_usage_summary(db_session, project_id=project.id) == []

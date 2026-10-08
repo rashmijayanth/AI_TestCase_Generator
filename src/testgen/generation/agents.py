@@ -6,13 +6,14 @@ unit-testable function: `some_node(state, deps=fake_deps)` works with no graph
 machinery involved.
 """
 
+import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 
-from testgen.generation.llm import content_str, get_chat_model
+from testgen.generation.llm import content_str, extract_usage, get_chat_model
 from testgen.generation.schemas import (
     ComplianceCritiqueOutput,
     RequirementAnalysisOutput,
@@ -35,6 +36,41 @@ class AgentDeps:
     embedder: EmbeddingPort
     vector_store: VectorStorePort
     max_retrieval_iterations: int = 3
+    # Populated by _invoke_tracked as nodes run; one entry per real LLM call.
+    # A plain mutable list, not GenerationState, deliberately: usage is
+    # per-process observability data for this one generation run, not
+    # something any node's business logic reads back, so it doesn't need to
+    # go through GenerationState's replace-on-update field-ownership rules
+    # (state.py's docstring) or a LangGraph reducer. worker/tasks.py reads
+    # this off the same `deps` object after graph.invoke() returns and
+    # persists it via orchestration.persist_llm_usage.
+    usage_log: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _invoke_tracked(
+    llm: BaseChatModel, prompt: str, *, deps: AgentDeps, agent_name: str
+) -> Any:
+    """llm.invoke(prompt), plus recording tokens/latency/model onto
+    deps.usage_log. Every node's real LLM call site should go through this
+    instead of calling llm.invoke directly, so usage tracking can't silently
+    drift out of sync as new nodes/call sites get added."""
+    started = time.monotonic()
+    response = llm.invoke(prompt)
+    latency_ms = int((time.monotonic() - started) * 1000)
+    input_tokens, output_tokens = extract_usage(response)
+    deps.usage_log.append(
+        {
+            "agent_name": agent_name,
+            # ChatGoogleGenerativeAI stores the model name it was constructed
+            # with on `.model`; fall back to "unknown" for any other
+            # BaseChatModel (e.g. a test fake) that doesn't set it.
+            "model": getattr(llm, "model", "unknown"),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "latency_ms": latency_ms,
+        }
+    )
+    return response
 
 
 def build_default_deps(settings: Settings | None = None) -> AgentDeps:
@@ -119,7 +155,7 @@ Respond with the safety class ("A", "B", or "C") and a one-sentence rationale.""
 def requirement_analyst_node(state: GenerationState, *, deps: AgentDeps) -> dict[str, Any]:
     llm = deps.chat_model_factory(response_schema=RequirementAnalysisOutput.model_json_schema())
     prompt = _REQUIREMENT_ANALYST_PROMPT.format(requirement_text=state["requirement_text"])
-    response = llm.invoke(prompt)
+    response = _invoke_tracked(llm, prompt, deps=deps, agent_name="requirement_analyst")
     parsed = RequirementAnalysisOutput.model_validate_json(content_str(response))
     safety_class = SafetyClass(parsed.safety_class.strip().upper())
     return {"safety_class": safety_class.value, "analysis_rationale": parsed.rationale}
@@ -156,7 +192,7 @@ def regulatory_researcher_node(state: GenerationState, *, deps: AgentDeps) -> di
         prompt = _SUFFICIENCY_PROMPT.format(
             requirement_text=state["requirement_text"], clauses_summary=_format_clauses(all_matches)
         )
-        response = llm.invoke(prompt)
+        response = _invoke_tracked(llm, prompt, deps=deps, agent_name="regulatory_researcher")
         check = SufficiencyCheckOutput.model_validate_json(content_str(response))
 
         if check.sufficient or not check.refined_query:
@@ -194,7 +230,7 @@ def strategist_node(state: GenerationState, *, deps: AgentDeps) -> dict[str, Any
         requirement_text=state["requirement_text"],
         clauses_summary=_format_clauses(state["retrieved_clauses"]),
     )
-    response = llm.invoke(prompt)
+    response = _invoke_tracked(llm, prompt, deps=deps, agent_name="test_strategist")
     parsed = TestPlanOutput.model_validate_json(content_str(response))
     test_types = [TestType(t.strip().lower()) for t in parsed.test_types]
     return {
@@ -236,7 +272,7 @@ def case_generator_node(state: GenerationState, *, deps: AgentDeps) -> dict[str,
         clauses_summary=_format_clauses(state["retrieved_clauses"]),
         feedback_section=feedback_section,
     )
-    response = llm.invoke(prompt)
+    response = _invoke_tracked(llm, prompt, deps=deps, agent_name="test_case_generator")
     parsed = TestCaseGeneratorOutput.model_validate_json(content_str(response))
 
     draft_test_cases = [
@@ -288,7 +324,7 @@ def data_synthesizer_node(state: GenerationState, *, deps: AgentDeps) -> dict[st
         prompt = _TEST_DATA_SYNTHESIZER_PROMPT.format(
             title=test_case["title"], test_type=test_case["test_type"], steps_summary=steps_summary
         )
-        response = llm.invoke(prompt)
+        response = _invoke_tracked(llm, prompt, deps=deps, agent_name="test_data_synthesizer")
         parsed = TestDatasetDraftOutput.model_validate_json(content_str(response))
         # The prompt asks for obviously-synthetic values, but this Presidio pass
         # (testgen.compliance, Phase 5) is the actual safety net DESIGN.md §3
@@ -347,7 +383,7 @@ def compliance_critic_node(state: GenerationState, *, deps: AgentDeps) -> dict[s
         clauses_summary=_format_clauses(independent_matches),
         test_cases_summary=test_cases_summary or "(none drafted)",
     )
-    response = llm.invoke(prompt)
+    response = _invoke_tracked(llm, prompt, deps=deps, agent_name="compliance_critic")
     parsed = ComplianceCritiqueOutput.model_validate_json(content_str(response))
 
     return {"critic_approved": parsed.approved, "critic_feedback": parsed.feedback}

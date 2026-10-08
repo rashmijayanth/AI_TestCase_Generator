@@ -179,6 +179,24 @@ class ApiClient:
         )
         return result
 
+    def llm_usage(self, project_id: str) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = self._request(
+            "GET", f"/api/v1/projects/{project_id}/llm-usage"
+        )
+        return result
+
+    def generate_all_pending(self, project_id: str) -> dict[str, Any]:
+        result: dict[str, Any] = self._request(
+            "POST", f"/api/v1/projects/{project_id}/generate-all-pending"
+        )
+        return result
+
+    def pending_approvals(self, project_id: str) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = self._request(
+            "GET", f"/api/v1/projects/{project_id}/pending-approvals"
+        )
+        return result
+
     def audit_log(self, limit: int = 100) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = self._request(
             "GET", "/api/v1/audit-log", params={"limit": limit}

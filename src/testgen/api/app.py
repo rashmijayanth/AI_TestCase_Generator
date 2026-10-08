@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from testgen.api.routers import audit, auth, documents, projects, requirements, traceability
+from testgen.api.routers import audit, auth, documents, projects, requirements, traceability, usage
 from testgen.platform.config import get_settings
 from testgen.platform.logging import configure_logging
 from testgen.platform.tracing import configure_tracing
@@ -35,6 +35,7 @@ def create_app() -> FastAPI:
     app.include_router(documents.router)
     app.include_router(requirements.router)
     app.include_router(traceability.router)
+    app.include_router(usage.router)
     app.include_router(audit.router)
     return app
 

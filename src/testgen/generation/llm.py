@@ -49,3 +49,16 @@ def content_str(message: BaseMessage) -> str:
     if isinstance(content, str):
         return content
     raise TypeError(f"Expected plain-text model content, got {type(content).__name__}")
+
+
+def extract_usage(message: BaseMessage) -> tuple[int, int]:
+    """Returns (input_tokens, output_tokens) from a Gemini response's
+    usage_metadata. ChatGoogleGenerativeAI populates AIMessage.usage_metadata
+    with input_tokens/output_tokens/total_tokens (confirmed against the
+    installed langchain-google-genai SDK); falls back to (0, 0) against any
+    fake/test double that doesn't set it, so tracking is additive and never
+    breaks a node that has no real usage data (e.g. unit tests)."""
+    usage = getattr(message, "usage_metadata", None)
+    if not usage:
+        return 0, 0
+    return usage.get("input_tokens", 0) or 0, usage.get("output_tokens", 0) or 0

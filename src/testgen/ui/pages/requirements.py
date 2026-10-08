@@ -76,7 +76,13 @@ def _render_draft_dataset(dataset: dict[str, Any]) -> None:
     st.dataframe(dataset["data"], hide_index=True, width="stretch")
 
 
-def _render_approval(client: ApiClient, requirement_id: str) -> None:
+def render_pending_approval(client: ApiClient, requirement_id: str) -> None:
+    """Renders the drafted test cases/critic feedback for one requirement's
+    paused human_approval interrupt, plus its Approve/Reject buttons. Shared
+    by this page (called after "Check status" shows awaiting_approval) and by
+    the Review Queue page (pages/review_queue.py), which lists every requirement
+    across a project already sitting at this interrupt.
+    """
     pending = call_api(
         lambda: client.pending_approval(requirement_id),
         error_prefix="Could not load pending review",
@@ -168,7 +174,7 @@ def _render_requirement(client: ApiClient, row: dict[str, Any]) -> None:
         if status:
             st.write(f"Last known status: `{status}`")
         if status == "awaiting_approval":
-            _render_approval(client, requirement_id)
+            render_pending_approval(client, requirement_id)
 
 
 def render() -> None:
@@ -191,6 +197,19 @@ def render() -> None:
     if not rows:
         st.info("No requirements yet -- upload a document for this project first.")
         return
+
+    if st.button("Generate all ungenerated", key="generate_all_pending"):
+        result = call_api(
+            lambda: client.generate_all_pending(project_id),
+            error_prefix="Could not trigger bulk generation",
+        )
+        if result is not None:
+            queued_count = len(result["queued"])
+            skipped_count = len(result["skipped"])
+            st.info(
+                f"Queued {queued_count} requirement(s) for generation "
+                f"({skipped_count} already in progress or done -- skipped)."
+            )
 
     for row in rows:
         _render_requirement(client, row)

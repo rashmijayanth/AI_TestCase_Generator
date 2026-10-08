@@ -47,26 +47,38 @@ def trigger_generation(
     return {"requirement_id": str(requirement_id), "status": "queued"}
 
 
+def _status_from_snapshot(snapshot: Any) -> str:
+    if not snapshot.values:
+        return "not_started"
+    if snapshot.next == ("human_approval",):
+        return "awaiting_approval"
+    if snapshot.next == ():
+        return "completed"
+    return "in_progress"
+
+
+def get_generation_status_for(graph: Any, requirement_id: uuid.UUID | str) -> str:
+    """Shared by the single-requirement endpoint below and the project-level
+    bulk-trigger endpoint (traceability.py) -- the latter builds one graph and
+    reuses it across every requirement in the project rather than paying the
+    build_generation_graph cost per requirement.
+    """
+    config: RunnableConfig = {"configurable": {"thread_id": str(requirement_id)}}
+    snapshot = graph.get_state(config)
+    return _status_from_snapshot(snapshot)
+
+
 @router.get("/{requirement_id}/generation-status")
 def generation_status(
     requirement_id: uuid.UUID, user: CurrentUser, db: DbSession
 ) -> dict[str, Any]:
     get_owned_requirement(db, user, requirement_id)
-    config: RunnableConfig = {"configurable": {"thread_id": str(requirement_id)}}
 
     # Reading a persisted checkpoint never executes a node, so this never
     # needs a real GEMINI_API_KEY -- see build_readonly_deps's docstring.
     with postgres_checkpointer() as checkpointer:
         graph = build_generation_graph(build_readonly_deps(), checkpointer=checkpointer)
-        snapshot = graph.get_state(config)
-
-    if not snapshot.values:
-        return {"status": "not_started"}
-    if snapshot.next == ("human_approval",):
-        return {"status": "awaiting_approval"}
-    if snapshot.next == ():
-        return {"status": "completed"}
-    return {"status": "in_progress"}
+        return {"status": get_generation_status_for(graph, requirement_id)}
 
 
 @router.get("/{requirement_id}/pending-approval")

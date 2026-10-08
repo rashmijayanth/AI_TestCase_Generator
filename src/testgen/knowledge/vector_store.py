@@ -61,6 +61,12 @@ class MilvusVectorStore:
                 dimension=dimension,
                 metric_type="COSINE",
             )
+        else:
+            # A collection that already existed on disk isn't guaranteed to be
+            # loaded into memory on THIS connection (Milvus Lite can leave it
+            # 'released' between client instances) -- load() is a no-op if
+            # it's already loaded, so this is safe to call unconditionally.
+            self._client.load_collection(_COLLECTION_NAME)
 
     def upsert_clauses(self, clauses: list[ClauseRecord]) -> None:
         data = [

@@ -36,7 +36,7 @@ services:
       MILVUS_DB_URI: /app/data/milvus_lite.db
       STORAGE_LOCAL_PATH: /app/data/storage
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - appdata:/app/data
     depends_on:
@@ -71,7 +71,7 @@ services:
     environment:
       API_BASE_URL: http://api:8000
     ports:
-      - "8501:8501"
+      - "8502:8501"
     depends_on:
       - api
 

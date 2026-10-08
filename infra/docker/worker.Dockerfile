@@ -37,4 +37,13 @@ USER app
 # user_data.sh.tftpl after the stack comes up (EC2). This container already
 # has the embeddings/vectorstore extras and the real env vars the script
 # needs, which is why it lives here rather than in a bare venv.
-CMD ["celery", "-A", "testgen.worker.celery_app", "worker", "--loglevel=info"]
+#
+# --concurrency=1: Milvus Lite (knowledge/vector_store.py) is a single-process
+# embedded engine -- it file-locks its .db file, so two Celery child processes
+# opening their own MilvusClient at once raises DataDirLockedError. Without
+# this flag, Celery's default prefork pool spawns one child per CPU core,
+# and two "Generate" clicks close together reliably hit that race. Production
+# swaps Milvus Lite for full Milvus standalone (see vector_store.py's module
+# docstring), which supports real concurrent access -- at that point this
+# flag can be relaxed.
+CMD ["celery", "-A", "testgen.worker.celery_app", "worker", "--loglevel=info", "--concurrency=1"]

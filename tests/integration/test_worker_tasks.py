@@ -27,6 +27,8 @@ from testgen.platform.enums import DocumentFormat, RequirementStatus
 from testgen.platform.models import Organization, Project
 from testgen.worker.tasks import run_generation_for_requirement
 from tests.fakes import ScriptedChatModelFactory, UnusedEmbedder, UnusedVectorStore
+from testgen.generation.agents import AgentDeps
+from testgen.generation.models import LLMGenerationRun
 
 _ANALYSIS_RESPONSE = '{"safety_class": "C", "rationale": "Failure could delay treatment."}'
 _SUFFICIENT_RESPONSE = '{"sufficient": true, "refined_query": ""}'
@@ -78,6 +80,14 @@ def committed_requirement() -> Iterator[Requirement]:
     yield requirement
 
     with session_scope() as session:
+        # llm_generation_runs has no ON DELETE CASCADE from requirement_id
+        # (same as every other FK to requirements.id in this codebase --
+        # compliance.models, traceability.models) -- delete child rows first.
+        # This fixture is the first to actually populate that table, since
+        # nothing wrote to it before persist_llm_usage existed.
+        session.execute(
+            delete(LLMGenerationRun).where(LLMGenerationRun.requirement_id == requirement_id)
+        )
         session.execute(delete(Requirement).where(Requirement.id == requirement_id))
         session.execute(delete(SourceDocument).where(SourceDocument.id == document_id))
         session.execute(delete(Project).where(Project.id == project_id))

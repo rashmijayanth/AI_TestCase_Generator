@@ -6,6 +6,13 @@ but it has NOT been exercised against the live API in this environment -- no
 GEMINI_API_KEY is available here (see docs/PROGRESS.md). Smoke-test it once a
 real key is configured. DeterministicFakeEmbedder is what the automated test
 suite actually runs against, so tests never need network access or a real key.
+
+Model note: text-embedding-004 was retired by Google on 2026-01-14. This uses
+its replacement, gemini-embedding-001, which defaults to 3072-dim output --
+we pin output_dimensionality=EMBEDDING_DIMENSION (768) via EmbedContentConfig
+so it stays compatible with the existing Milvus collection schema (see
+vector_store.py) without needing to recreate the collection at a new
+dimension.
 """
 
 import hashlib
@@ -13,7 +20,7 @@ from typing import Protocol
 
 from testgen.platform.config import Settings, get_settings
 
-EMBEDDING_DIMENSION = 768  # matches Gemini's text-embedding-004 output size
+EMBEDDING_DIMENSION = 768  # pinned via output_dimensionality; see module docstring
 
 
 class EmbeddingPort(Protocol):
@@ -29,15 +36,23 @@ def _extract_vectors(result: object) -> list[list[float]]:
 
 
 class GeminiEmbedder:
-    def __init__(self, api_key: str, model: str = "text-embedding-004") -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gemini-embedding-001",
+        output_dimensionality: int = EMBEDDING_DIMENSION,
+    ) -> None:
         if not api_key:
             raise ValueError("GEMINI_API_KEY is required to construct GeminiEmbedder")
         from google import genai  # lazy: the fake-embedder path never needs this SDK installed
 
         self._client = genai.Client(api_key=api_key)
         self._model = model
+        self._output_dimensionality = output_dimensionality
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        from google.genai import types
+
         # list[str] is a valid runtime argument (confirmed via signature
         # introspection: contents accepts list[str | Image | File | Part | ...]),
         # but mypy's strict invariant-generics rule doesn't consider list[str]
@@ -45,6 +60,7 @@ class GeminiEmbedder:
         result = self._client.models.embed_content(
             model=self._model,
             contents=texts,  # type: ignore[arg-type]
+            config=types.EmbedContentConfig(output_dimensionality=self._output_dimensionality),
         )
         return _extract_vectors(result)
 

@@ -29,10 +29,13 @@ class Settings(BaseSettings):
     # stays unchanged.
     milvus_uri: str = Field(default="./data/milvus_lite.db", validation_alias="MILVUS_DB_URI")
 
+    # Google retires Gemini model names on a rolling schedule -- if a call
+    # starts 404ing, check https://ai.google.dev/gemini-api/docs/models for
+    # the current names before assuming the code is broken.
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.0-flash"
-    gemini_model_pro: str = "gemini-1.5-pro"
-    gemini_embedding_model: str = "text-embedding-004"
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_model_pro: str = "gemini-2.5-pro"
+    gemini_embedding_model: str = "gemini-embedding-001"
 
     # Obviously-a-placeholder default so local dev/tests work with zero setup,
     # but so it's unmistakable this must be overridden for staging/prod.

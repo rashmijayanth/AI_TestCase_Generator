@@ -222,6 +222,36 @@ def test_rtm_and_coverage_gaps_hit_project_scoped_paths() -> None:
 
 
 @pytest.mark.unit
+def test_generate_all_pending_hits_project_scoped_path() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/projects/proj-1/generate-all-pending"
+        assert request.method == "POST"
+        return httpx.Response(200, json={"queued": ["req-1"], "skipped": []})
+
+    client = _client(handler)
+    result = client.generate_all_pending("proj-1")
+
+    assert result == {"queued": ["req-1"], "skipped": []}
+
+
+@pytest.mark.unit
+def test_pending_approvals_hits_project_scoped_path() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/projects/proj-1/pending-approvals"
+        assert request.method == "GET"
+        return httpx.Response(
+            200, json=[{"requirement_id": "req-1", "external_ref": "REQ-001", "requirement_text": "..."}]
+        )
+
+    client = _client(handler)
+    result = client.pending_approvals("proj-1")
+
+    assert result == [
+        {"requirement_id": "req-1", "external_ref": "REQ-001", "requirement_text": "..."}
+    ]
+
+
+@pytest.mark.unit
 def test_audit_log_passes_limit_as_query_param() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/v1/audit-log"

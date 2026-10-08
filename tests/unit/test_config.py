@@ -12,7 +12,7 @@ def test_defaults_are_sane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     settings = Settings()
 
     assert settings.app_env == "local"
-    assert settings.gemini_model == "gemini-2.0-flash"
+    assert settings.gemini_model == "gemini-2.5-flash"
     assert settings.database_url.startswith("postgresql+psycopg://")
     assert settings.storage_backend == "local"
 

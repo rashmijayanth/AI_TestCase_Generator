@@ -7,11 +7,13 @@ graph has resumed past the human_approval interrupt.
 """
 
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from testgen.generation.models import TestCase, TestDataset
+from testgen.generation.models import LLMGenerationRun, TestCase, TestDataset
 from testgen.generation.state import GenerationState
 from testgen.ingestion.models import Requirement
 from testgen.platform.audit import record_event
@@ -28,6 +30,98 @@ from testgen.traceability.service import (
 )
 
 PROMPT_VERSION = "v1"
+
+
+def persist_llm_usage(
+    session: Session,
+    *,
+    requirement_id: uuid.UUID,
+    usage_log: list[dict[str, Any]],
+) -> None:
+    """One LLMGenerationRun row per real LLM call this generation run made
+    (deps.usage_log, populated by generation.agents._invoke_tracked).
+
+    Deliberately separate from persist_generation_result: usage happened
+    during the worker's graph.invoke() call, which is a different request
+    (and possibly a different point in time entirely) than the later
+    approve/reject request persist_generation_result runs from -- cost/token
+    tracking shouldn't wait on, or be lost by, a human never approving the
+    draft. Caller commits (same convention as record_event).
+
+    cost_usd is intentionally left at its default (0.0): Gemini's per-model
+    per-token pricing isn't verified against a live billing account in this
+    environment (see docs/PROGRESS.md's Gemini live-call caveat), and writing
+    in an unverified rate would be a worse error than an honest zero. Fill in
+    real rates here once real billing is observed.
+
+    Flushes but does not commit -- same convention as platform.audit.record_event,
+    so a caller composing this with other writes in one transaction controls
+    the commit boundary itself.
+    """
+    for call in usage_log:
+        session.add(
+            LLMGenerationRun(
+                agent_name=call["agent_name"],
+                model=call["model"],
+                prompt_version=PROMPT_VERSION,
+                input_tokens=call["input_tokens"],
+                output_tokens=call["output_tokens"],
+                latency_ms=call["latency_ms"],
+                requirement_id=requirement_id,
+            )
+        )
+    session.flush()
+
+
+@dataclass(frozen=True)
+class UsageSummaryRow:
+    """One row per agent, aggregated across every requirement in a project --
+    same row-per-dimension shape as traceability.service's CoverageGap/RTMRow,
+    for the same reason: a thin API router just maps these to dicts (DESIGN.md
+    §6 -- no business logic in the UI layer, so the aggregation belongs here,
+    not in ui/pages/usage.py).
+    """
+
+    agent_name: str
+    call_count: int
+    total_input_tokens: int
+    total_output_tokens: int
+    total_cost_usd: float
+    avg_latency_ms: float
+
+
+def project_llm_usage_summary(session: Session, *, project_id: uuid.UUID) -> list[UsageSummaryRow]:
+    """Per-agent token/cost/latency totals for every LLMGenerationRun tied to
+    a requirement in this project (LLMGenerationRun has no project_id of its
+    own -- DESIGN.md §5 links it via requirement_id -- so this joins through
+    Requirement the same way find_coverage_gaps/generate_rtm do).
+    """
+    rows = session.execute(
+        select(
+            LLMGenerationRun.agent_name,
+            func.count(LLMGenerationRun.id),
+            func.coalesce(func.sum(LLMGenerationRun.input_tokens), 0),
+            func.coalesce(func.sum(LLMGenerationRun.output_tokens), 0),
+            func.coalesce(func.sum(LLMGenerationRun.cost_usd), 0.0),
+            func.coalesce(func.avg(LLMGenerationRun.latency_ms), 0.0),
+        )
+        .join(Requirement, Requirement.id == LLMGenerationRun.requirement_id)
+        .where(Requirement.project_id == project_id)
+        .group_by(LLMGenerationRun.agent_name)
+        .order_by(LLMGenerationRun.agent_name)
+    ).all()
+
+    return [
+        UsageSummaryRow(
+            agent_name=agent_name,
+            call_count=call_count,
+            total_input_tokens=total_input,
+            total_output_tokens=total_output,
+            total_cost_usd=total_cost,
+            avg_latency_ms=avg_latency,
+        )
+        for agent_name, call_count, total_input, total_output, total_cost, avg_latency in rows
+    ]
 
 
 def persist_generation_result(

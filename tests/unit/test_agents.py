@@ -19,6 +19,7 @@ from testgen.generation.agents import (
     strategist_node,
     traceability_agent_node,
 )
+from testgen.generation.llm import extract_usage
 from testgen.generation.state import new_generation_state
 from tests.fakes import ScriptedChatModelFactory, UnusedEmbedder, UnusedVectorStore
 
@@ -157,3 +158,41 @@ def test_traceability_agent_reports_no_gaps_when_fully_covered() -> None:
     result = traceability_agent_node(state, deps=deps)
 
     assert result["coverage_gaps"] == []
+
+
+@pytest.mark.unit
+def test_extract_usage_reads_real_usage_metadata() -> None:
+    message = AIMessage(
+        content="{}",
+        usage_metadata={"input_tokens": 42, "output_tokens": 7, "total_tokens": 49},
+    )
+
+    assert extract_usage(message) == (42, 7)
+
+
+@pytest.mark.unit
+def test_extract_usage_defaults_to_zero_without_usage_metadata() -> None:
+    # FakeMessagesListChatModel-produced messages (every other test in this
+    # file) never set usage_metadata -- confirms tracking degrades safely
+    # rather than raising, so it can't break any node's existing behavior.
+    assert extract_usage(AIMessage(content="{}")) == (0, 0)
+
+
+@pytest.mark.unit
+def test_requirement_analyst_records_llm_usage() -> None:
+    """A node's real call site should end up on deps.usage_log with the
+    right agent_name, even though ScriptedChatModelFactory's fake responses
+    (used by every other test in this file) don't set real token counts."""
+    deps = _deps(
+        ScriptedChatModelFactory(
+            {"RequirementAnalysisOutput": ['{"safety_class": "A", "rationale": "Low risk."}']}
+        )
+    )
+    state = new_generation_state("req-1", "The UI shall display the patient's name.")
+
+    requirement_analyst_node(state, deps=deps)
+
+    assert len(deps.usage_log) == 1
+    assert deps.usage_log[0]["agent_name"] == "requirement_analyst"
+    assert deps.usage_log[0]["input_tokens"] == 0  # ScriptedChatModelFactory sets no real usage
+    assert "latency_ms" in deps.usage_log[0]

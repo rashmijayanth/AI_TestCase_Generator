@@ -15,6 +15,7 @@ from langchain_core.runnables import RunnableConfig
 from testgen.generation.agents import AgentDeps, build_default_deps
 from testgen.generation.checkpointer import postgres_checkpointer
 from testgen.generation.graph import build_generation_graph
+from testgen.generation.orchestration import persist_llm_usage
 from testgen.generation.state import new_generation_state
 from testgen.ingestion.models import Requirement
 from testgen.platform.db.session import session_scope
@@ -40,6 +41,19 @@ def run_generation_for_requirement(
             requirement_id, requirement_text, max_retries=max_retries
         )
         result = graph.invoke(initial_state, config)
+
+    # Persisted regardless of whether this run ends awaiting approval,
+    # gets retried, or is later rejected -- token/cost spend already
+    # happened by this point either way, and shouldn't be lost waiting
+    # on a human decision that may come much later (see
+    # persist_llm_usage's docstring).
+    if deps.usage_log:
+        with session_scope() as usage_session:
+            persist_llm_usage(
+                usage_session,
+                requirement_id=uuid.UUID(requirement_id),
+                usage_log=deps.usage_log,
+            )
 
     return {
         "requirement_id": requirement_id,

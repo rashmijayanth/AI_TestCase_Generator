@@ -15,7 +15,7 @@ import streamlit as st
 
 from testgen.ui.api_client import ApiError
 from testgen.ui.components import LOGOUT_MESSAGE_KEY
-from testgen.ui.pages import audit, projects, requirements, rtm
+from testgen.ui.pages import audit, projects, requirements, review_queue, rtm, usage
 from testgen.ui.session import (
     current_user_email,
     is_authenticated,
@@ -98,7 +98,11 @@ def main() -> None:
                 url_path="requirements",
                 default=True,
             ),
+            st.Page(
+                review_queue.render, title="Review Queue", icon="📋", url_path="review-queue"
+            ),
             st.Page(rtm.render, title="Traceability Matrix", icon="🔗", url_path="rtm"),
+            st.Page(usage.render, title="LLM Usage & Cost", icon="💰", url_path="usage"),
             st.Page(audit.render, title="Audit Log", icon="📜", url_path="audit"),
         ]
     )
